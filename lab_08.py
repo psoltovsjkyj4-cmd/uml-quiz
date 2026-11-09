@@ -1,68 +1,58 @@
-def lint_diff(text, rules=None, max_changes=400):
-if rules is None:
-rules = {"R001", "R002", "R003", "R004", "R005", "R006"}
-else:
-rules = set(rules)
+import re
 
-known_rules = {"R001", "R002", "R003", "R004", "R005", "R006"}
-for r in rules:
-    if r not in known_rules:
-        raise ValueError(f"Невідоме правило: {r}")
+def lint_diff(text: str, rules=None, max_changes: int = 400) -> list[dict]:
+if rules is not None:
+valid_rules = {"R001", "R002", "R003", "R004", "R005", "R006"}
+for r in sorted(rules):
+if r not in valid_rules:
+raise ValueError(f"Невідоме правило: {r}")
 
 lines = text.splitlines(keepends=False)
 issues = []
 
 current_file = ""
-current_line_num = 0
-added_count = 0
-deleted_count = 0
+current_line_no = 0
+total_changes = 0
 
 i = 0
 while i < len(lines):
     line = lines[i]
-    if line.startswith("diff --git"):
-        parts = line.split(" b/")
-        if len(parts) > 1:
-            current_file = parts[1]
-        else:
-            current_file = ""
+    if line.startswith("+++ b/"):
+        current_file = line[6:]
+        current_line_no = 0
+        i += 1
+        continue
     elif line.startswith("@@"):
-        pos = line.find("+")
-        if pos != -1:
-            hunk_part = line[pos+1:].split(" ")[0]
-            if "," in hunk_part:
-                current_line_num = int(hunk_part.split(",")[0]) - 1
-            else:
-                current_line_num = int(hunk_part) - 1
-    elif line.startswith("+") and not line.startswith("+++"):
-        current_line_num += 1
-        added_count += 1
+        match = re.search(r'\+(\d+)', line)
+        if match:
+            current_line_no = int(match.group(1)) - 1
+        i += 1
+        continue
+        
+    if line.startswith("+") and not line.startswith("+++"):
+        total_changes += 1
         content = line[1:]
+        current_line_no += 1
         
-        # R001: TODO або FIXME як окреме слово
-        if "R001" in rules:
-            import re
+        if rules is None or "R001" in rules:
             if re.search(r'\b(TODO|FIXME)\b', content):
-                issues.append({"path": current_file, "line": current_line_num, "code": "R001"})
-        
-        # R002: виклик print()
-        if "R002" in rules:
-            if "print(" in content:
-                issues.append({"path": current_file, "line": current_line_num, "code": "R002"})
+                issues.append({"path": current_file, "line": current_line_no, "code": "R001"})
                 
-        # R003: зайві пробіли чи табуляції в кінці рядка
-        if "R003" in rules:
+        if rules is None or "R002" in rules:
+            if re.search(r'\bprint\s*\(', content):
+                issues.append({"path": current_file, "line": current_line_no, "code": "R002"})
+                
+        if rules is None or "R003" in rules:
             if content.endswith(" ") or content.endswith("\t"):
-                if content.strip() != "":
-                    issues.append({"path": current_file, "line": current_line_num, "code": "R003"})
-                    
+                issues.append({"path": current_file, "line": current_line_no, "code": "R003"})
     elif line.startswith("-") and not line.startswith("---"):
-        deleted_count += 1
-    elif line.startswith(" ") or line == "":
-        if line.startswith(" "):
-            current_line_num += 1
-
-if "R006" in rules and (added_count + deleted_count) > max_changes:
+        total_changes += 1
+    elif not line.startswith("\\"):
+        if current_line_no > 0 or line.startswith(" "):
+            current_line_no += 1
+    i += 1
+    
+if total_changes > max_changes:
     issues.append({"path": "", "line": 0, "code": "R006"})
-
+    
 return issues
